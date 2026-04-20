@@ -14,19 +14,18 @@ if not os.path.exists(FILES_DIR):
 def init_db():
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        # Склад
         cursor.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, name TEXT, qty REAL, price REAL)')
-        # Замовлення
         cursor.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, customer TEXT, detail TEXT, qty INTEGER, price REAL, status TEXT, photo TEXT)')
-        # Користувачі
         cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                           (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)''')
-        # Логи
         cursor.execute('''CREATE TABLE IF NOT EXISTS logs 
                           (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)''')
         
-        # Дефолтний адмін
+        # Додаємо адміна (українською)
         cursor.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES ('admin', 'admin123', 'Адмін')")
+        
+        # ВИПРАВЛЕННЯ: Якщо в базі залишилось "Админ" (рос), замінюємо на "Адмін" (укр)
+        cursor.execute("UPDATE users SET role = 'Адмін' WHERE role = 'Админ'")
         conn.commit()
 
 init_db()
@@ -55,7 +54,6 @@ def check_password():
                     st.error("❌ Невірний логін або пароль")
         return False
     
-    # Heartbeat (Оновлення статусу онлайн)
     with sqlite3.connect(DB_NAME) as conn:
         conn.execute("UPDATE users SET last_seen = ? WHERE username = ?", (datetime.now(), st.session_state["username"]))
         conn.commit()
@@ -74,7 +72,6 @@ if check_password():
         st.session_state.clear()
         st.rerun()
 
-    # Список онлайн
     st.sidebar.markdown("---")
     st.sidebar.subheader("🟢 Зараз у системі")
     with sqlite3.connect(DB_NAME) as conn:
@@ -83,7 +80,7 @@ if check_password():
         for _, row in online_users.iterrows():
             st.sidebar.write(f"● {row['username']} ({row['role']})")
 
-    # Меню
+    # Формування меню (ПЕРЕВІРКА НА 'Адмін')
     menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Склад"]
     if user_role == "Адмін":
         menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
@@ -116,8 +113,8 @@ if check_password():
                 with c2:
                     statuses = ["Нове", "Обробка", "Готово"]
                     current_idx = statuses.index(row['status']) if row['status'] in statuses else 0
-                    new_status = st.selectbox("Змінити статус", statuses, index=current_idx, key=f"s_{row['id']}")
-                    if st.button("Оновити статус", key=f"b_{row['id']}"):
+                    new_status = st.selectbox("Статус", statuses, index=current_idx, key=f"s_{row['id']}")
+                    if st.button("Оновити", key=f"b_{row['id']}"):
                         db_conn.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, row['id']))
                         db_conn.commit()
                         add_log(username, f"Змінив статус замовлення №{row['id']} на '{new_status}'")
@@ -137,7 +134,7 @@ if check_password():
                     if st.form_submit_button("Зберегти"):
                         db_conn.execute("INSERT INTO inventory (name, qty, price) VALUES (?,?,?)", (n, qty, pr))
                         db_conn.commit()
-                        add_log(username, f"Додав на склад: {n} ({qty} шт)")
+                        add_log(username, f"Додав на склад: {n}")
                         st.rerun()
 
     # --- 4. НОВЕ ЗАМОВЛЕННЯ ---
@@ -147,32 +144,30 @@ if check_password():
             cust = st.text_input("Замовник")
             det = st.text_input("Виріб")
             q_ord = st.number_input("Кількість", min_value=1)
-            p_ord = st.number_input("Ціна продажу (за шт)", min_value=0.0)
-            if st.form_submit_button("Запустити у виробництво"):
+            p_ord = st.number_input("Ціна продажу", min_value=0.0)
+            if st.form_submit_button("Запустити"):
                 db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status) VALUES (?,?,?,?,'Нове')", (cust, det, q_ord, p_ord))
                 db_conn.commit()
-                add_log(username, f"Створив замовлення: {det} для {cust}")
+                add_log(username, f"Створив замовлення для {cust}")
                 st.success("Замовлення додано!")
 
     # --- 5. ПЕРСОНАЛ ---
     elif choice == "⚙️ Персонал":
         st.header("👥 Керування доступом")
-        with st.expander("➕ Зареєструвати працівника"):
+        with st.expander("➕ Новий працівник"):
             with st.form("reg"):
-                u, p, r = st.text_input("Логін"), st.text_input("Пароль", type="password"), st.selectbox("Роль", ["Адмін", "Конструктор", "Робочий"])
-                if st.form_submit_button("Створити акаунт"):
+                u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Адмін", "Конструктор", "Робочий"])
+                if st.form_submit_button("Створити"):
                     try:
                         db_conn.execute("INSERT INTO users (username, password, role) VALUES (?,?,?)", (u, p, r))
                         db_conn.commit()
                         add_log(username, f"Створив користувача {u}")
-                        st.success("Готово!")
                         st.rerun()
-                    except: st.error("Цей логін вже зайнятий")
+                    except: st.error("Логін зайнятий")
 
         st.divider()
-        st.subheader("📝 Редагування даних")
         all_u = pd.read_sql_query("SELECT username, role FROM users", db_conn)
-        target = st.selectbox("Кого редагуємо?", all_u['username'].tolist())
+        target = st.selectbox("Редагувати працівника", all_u['username'].tolist())
         
         c1, c2 = st.columns(2)
         with c1:
@@ -180,31 +175,23 @@ if check_password():
             edit_role = st.selectbox("Нова роль", ["Адмін", "Конструктор", "Робочий"], 
                                      index=["Адмін", "Конструктор", "Робочий"].index(all_u[all_u['username']==target]['role'].iloc[0]))
         with c2:
-            edit_pass = st.text_input("Новий пароль (залиште порожнім, якщо не змінюєте)")
+            edit_pass = st.text_input("Новий пароль (залиште порожнім)")
 
-        if st.button("💾 Зберегти зміни"):
+        if st.button("💾 Зберегти"):
             if edit_pass:
                 db_conn.execute("UPDATE users SET username=?, password=?, role=? WHERE username=?", (edit_name, edit_pass, edit_role, target))
             else:
                 db_conn.execute("UPDATE users SET username=?, role=? WHERE username=?", (edit_name, edit_role, target))
             db_conn.execute("UPDATE logs SET username=? WHERE username=?", (edit_name, target))
             db_conn.commit()
-            add_log(username, f"Змінив дані користувача {target}")
             st.rerun()
-
-        if st.button("🗑 Видалити працівника"):
-            if target != username:
-                db_conn.execute("DELETE FROM users WHERE username=?", (target,))
-                db_conn.commit()
-                add_log(username, f"Видалив користувача {target}")
-                st.rerun()
-            else: st.error("Себе видаляти не можна!")
 
     # --- 6. ЖУРНАЛ ДІЙ ---
     elif choice == "📜 Журнал дій":
-        st.header("📜 Журнал активності персоналу")
-        df_l = pd.read_sql_query("SELECT timestamp as 'Час', username as 'Користувач', action as 'Дія' FROM logs ORDER BY timestamp DESC LIMIT 100", db_conn)
+        st.header("📜 Журнал активності")
+        df_l = pd.read_sql_query("SELECT timestamp as 'Час', username as 'Користувач', action as 'Дія' FROM logs ORDER BY timestamp DESC", db_conn)
         st.table(df_l)
 
     db_conn.close()
+
 
