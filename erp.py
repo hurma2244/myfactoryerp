@@ -21,11 +21,13 @@ def init_db():
         cursor.execute('''CREATE TABLE IF NOT EXISTS logs 
                           (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)''')
         
-        # Додаємо адміна (українською)
+        # Створення адміна
         cursor.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES ('admin', 'admin123', 'Адмін')")
         
-        # ВИПРАВЛЕННЯ: Якщо в базі залишилось "Админ" (рос), замінюємо на "Адмін" (укр)
-        cursor.execute("UPDATE users SET role = 'Адмін' WHERE role = 'Админ'")
+        # ВИПРАВЛЕННЯ РОЛЕЙ: Переводимо всі старі записи на українську
+        cursor.execute("UPDATE users SET role = 'Адмін' WHERE role IN ('Админ', 'admin', 'Admin')")
+        cursor.execute("UPDATE users SET role = 'Робочий' WHERE role IN ('Рабочий', 'worker', 'Worker')")
+        cursor.execute("UPDATE users SET role = 'Конструктор' WHERE role IN ('Designer', 'designer')")
         conn.commit()
 
 init_db()
@@ -80,7 +82,7 @@ if check_password():
         for _, row in online_users.iterrows():
             st.sidebar.write(f"● {row['username']} ({row['role']})")
 
-    # Формування меню (ПЕРЕВІРКА НА 'Адмін')
+    # Формування меню
     menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Склад"]
     if user_role == "Адмін":
         menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
@@ -151,12 +153,12 @@ if check_password():
                 add_log(username, f"Створив замовлення для {cust}")
                 st.success("Замовлення додано!")
 
-    # --- 5. ПЕРСОНАЛ ---
+    # --- 5. ПЕРСОНАЛ (ВИПРАВЛЕНИЙ) ---
     elif choice == "⚙️ Персонал":
         st.header("👥 Керування доступом")
         with st.expander("➕ Новий працівник"):
             with st.form("reg"):
-                u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Адмін", "Конструктор", "Робочий"])
+                u, p, r = st.text_input("Логін"), st.text_input("Пароль", type="password"), st.selectbox("Роль", ["Адмін", "Конструктор", "Робочий"])
                 if st.form_submit_button("Створити"):
                     try:
                         db_conn.execute("INSERT INTO users (username, password, role) VALUES (?,?,?)", (u, p, r))
@@ -169,13 +171,21 @@ if check_password():
         all_u = pd.read_sql_query("SELECT username, role FROM users", db_conn)
         target = st.selectbox("Редагувати працівника", all_u['username'].tolist())
         
+        # БЕЗПЕЧНИЙ ПОШУК РОЛІ
+        current_db_role = all_u[all_u['username'] == target]['role'].iloc[0]
+        roles_list = ["Адмін", "Конструктор", "Робочий"]
+        
+        if current_db_role in roles_list:
+            role_idx = roles_list.index(current_db_role)
+        else:
+            role_idx = 2 # Ставимо "Робочий" за замовчуванням, якщо в базі помилка
+
         c1, c2 = st.columns(2)
         with c1:
             edit_name = st.text_input("Новий логін", value=target)
-            edit_role = st.selectbox("Нова роль", ["Адмін", "Конструктор", "Робочий"], 
-                                     index=["Адмін", "Конструктор", "Робочий"].index(all_u[all_u['username']==target]['role'].iloc[0]))
+            edit_role = st.selectbox("Нова роль", roles_list, index=role_idx)
         with c2:
-            edit_pass = st.text_input("Новий пароль (залиште порожнім)")
+            edit_pass = st.text_input("Новий пароль (залиште порожнім)", type="password")
 
         if st.button("💾 Зберегти"):
             if edit_pass:
@@ -184,7 +194,15 @@ if check_password():
                 db_conn.execute("UPDATE users SET username=?, role=? WHERE username=?", (edit_name, edit_role, target))
             db_conn.execute("UPDATE logs SET username=? WHERE username=?", (edit_name, target))
             db_conn.commit()
+            st.success("Оновлено!")
             st.rerun()
+
+        if st.button("🗑 Видалити працівника"):
+            if target != username:
+                db_conn.execute("DELETE FROM users WHERE username=?", (target,))
+                db_conn.commit()
+                st.rerun()
+            else: st.error("Себе видаляти не можна!")
 
     # --- 6. ЖУРНАЛ ДІЙ ---
     elif choice == "📜 Журнал дій":
