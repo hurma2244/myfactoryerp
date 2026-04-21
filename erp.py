@@ -7,14 +7,21 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ БД ---
+# --- 2. КОНФІГУРАЦІЯ ТА ПАПКИ ---
 DB_NAME = 'factory.db'
+UPLOAD_DIR = 'files' # Папка для файлів
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# Розширення для SolidWorks та SolidCAM
+ALLOWED_EXT = [".png", ".pdf", ".txt", ".bin", ".sldprt", ".sldasm", ".slddrw", ".prt", ".asm", ".drw", ".gcode", ".nc", ".tap"]
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, name TEXT, qty REAL, price REAL)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, customer TEXT, detail TEXT, qty INTEGER, price REAL, status TEXT, photo TEXT)')
+    # Додано колонку file_path для збереження шляху до файлу
+    cursor.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, customer TEXT, detail TEXT, qty INTEGER, price REAL, status TEXT, file_path TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)')
     
@@ -84,7 +91,6 @@ choice = st.sidebar.selectbox("Меню", menu)
 
 if choice == "📦 Склад":
     st.header("📦 Склад матеріалів")
-    # Робочі бачать тільки назву та кількість, Адмін бачить ще й ціни
     query = "SELECT name, qty, price FROM inventory" if user_role == "Адмін" else "SELECT name, qty FROM inventory"
     df_inv = pd.read_sql_query(query, db_conn)
     st.dataframe(df_inv, use_container_width=True)
@@ -101,25 +107,6 @@ if choice == "📦 Склад":
                 db_conn.commit()
                 add_log(username, f"Змінив залишок {mat_name} на {new_qty}")
                 st.rerun()
-        
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1.expander("➕ Додати позицію"):
-            with st.form("add_form"):
-                n = st.text_input("Назва")
-                q = st.number_input("Кількість", min_value=0.0)
-                p = st.number_input("Ціна закупки", min_value=0.0)
-                if st.form_submit_button("Зберегти"):
-                    db_conn.execute("INSERT INTO inventory (name, qty, price) VALUES (?,?,?)", (n, q, p))
-                    db_conn.commit()
-                    st.rerun()
-        with col2.expander("🗑️ Видалити позицію"):
-            if not df_inv.empty:
-                d_name = st.selectbox("Що видалити?", df_inv['name'].tolist(), key="del_sel")
-                if st.button("Видалити назавжди"):
-                    db_conn.execute("DELETE FROM inventory WHERE name=?", (d_name,))
-                    db_conn.commit()
-                    st.rerun()
 
 elif choice == "🛠 Виробництво":
     st.header("📋 Журнал виробництва")
@@ -130,10 +117,15 @@ elif choice == "🛠 Виробництво":
             c1, c2 = st.columns(2)
             with c1:
                 st.write(f"**Кількість:** {row['qty']} шт.")
-                # ФІНАНСИ ТІЛЬКИ ДЛЯ АДМІНА
+                if row['file_path']:
+                    file_name = os.path.basename(row['file_path'])
+                    with open(row['file_path'], "rb") as f:
+                        st.download_button(f"📥 Завантажити файл: {file_name}", f, file_name=file_name, key=f"dl_{row['id']}")
+                else:
+                    st.info("Файлів не додано")
+                
                 if user_role == "Адмін":
                     st.write(f"**Ціна за од.:** {row['price']} грн")
-                    st.write(f"**Сума:** {row['qty'] * row['price']} грн")
             with c2:
                 statuses = ["Нове", "Обробка", "Готово"]
                 idx = statuses.index(row['status']) if row['status'] in statuses else 0
@@ -152,39 +144,47 @@ elif choice == "📊 Аналітика":
         st.columns(2)[0].metric("Вартість складу", f"{inv_val:,.2f} грн")
         st.columns(2)[1].metric("Замовлення в роботі (дохід)", f"{ord_val:,.2f} грн")
     else:
-        st.warning("🔒 Доступ до фінансових звітів обмежено. Зверніться до адміністратора.")
+        st.warning("🔒 Доступ обмежено.")
 
 elif choice == "📝 Нове замовлення" and user_role == "Адмін":
     st.header("🆕 Реєстрація замовлення")
-    with st.form("new_o"):
-        c, d = st.text_input("Замовник"), st.text_input("Виріб")
+    with st.form("new_o", clear_on_submit=True):
+        c, d = st.text_input("Замовник"), st.text_input("Виріб/Деталь")
         qo, po = st.number_input("Кількість", min_value=1), st.number_input("Ціна продажу", min_value=0.0)
-        if st.form_submit_button("Створити"):
-            db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status) VALUES (?,?,?,?,'Нове')", (c, d, qo, po))
+        uploaded_file = st.file_uploader("Додати тех. документацію (PNG, PDF, TXT, BIN, SolidWorks)", type=["png", "pdf", "txt", "bin", "sldprt", "sldasm", "slddrw", "nc", "tap"])
+        
+        if st.form_submit_button("Створити замовлення"):
+            file_path = None
+            if uploaded_file:
+                file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+                with open(file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+            
+            db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, file_path) VALUES (?,?,?,?,'Нове',?)", 
+                            (c, d, qo, po, file_path))
             db_conn.commit()
-            add_log(username, f"Нове замовлення: {c} - {d}")
-            st.success("Замовлення додано!")
+            add_log(username, f"Нове замовлення з файлом: {c}")
+            st.success("Додано!")
 
 elif choice == "⚙️ Персонал" and user_role == "Адмін":
-    st.header("👥 Керування персоналом")
+    st.header("👥 Персонал")
     st.table(pd.read_sql_query("SELECT username, role FROM users", db_conn))
-    with st.expander("➕ Реєстрація нового працівника"):
-        with st.form("u_reg"):
-            u = st.text_input("Логін")
-            p = st.text_input("Пароль")
-            r = st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
-            if st.form_submit_button("Створити"):
-                try:
-                    db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
-                    db_conn.commit()
-                    add_log(username, f"Створив користувача {u}")
-                    st.success(f"Працівника {u} додано!")
-                    st.rerun()
-                except: st.error("Логін вже зайнятий!")
+    with st.expander("➕ Новий працівник"):
+        u = st.text_input("Логін")
+        p = st.text_input("Пароль")
+        r = st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
+        if st.button("Створити"):
+            try:
+                db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+                db_conn.commit()
+                st.rerun()
+            except: st.error("Логін зайнятий")
 
 elif choice == "📜 Журнал дій" and user_role == "Адмін":
-    st.header("📜 Журнал подій")
+    st.header("📜 Журнал")
     st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 150", db_conn), use_container_width=True)
 
 db_conn.close()
+
+
 
