@@ -18,7 +18,6 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)')
     
-    # Створюємо адміна тільки якщо таблиця порожня
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO users (username, password, role, last_seen) VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now(),))
@@ -77,18 +76,20 @@ if st.sidebar.button("Вийти"):
     st.rerun()
 
 menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Склад"]
-if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
+if user_role == "Адмін": 
+    menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
 choice = st.sidebar.selectbox("Меню", menu)
 
 # --- 5. РОЗДІЛИ ---
 
 if choice == "📦 Склад":
     st.header("📦 Склад матеріалів")
-    df_inv = pd.read_sql_query("SELECT * FROM inventory", db_conn)
+    # Робочі бачать тільки назву та кількість, Адмін бачить ще й ціни
+    query = "SELECT name, qty, price FROM inventory" if user_role == "Адмін" else "SELECT name, qty FROM inventory"
+    df_inv = pd.read_sql_query(query, db_conn)
     st.dataframe(df_inv, use_container_width=True)
 
     if user_role == "Адмін":
-        # ПОВЕРНУТО РЕДАГУВАННЯ
         st.subheader("📝 Швидке корегування залишків")
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
@@ -107,7 +108,7 @@ if choice == "📦 Склад":
             with st.form("add_form"):
                 n = st.text_input("Назва")
                 q = st.number_input("Кількість", min_value=0.0)
-                p = st.number_input("Ціна", min_value=0.0)
+                p = st.number_input("Ціна закупки", min_value=0.0)
                 if st.form_submit_button("Зберегти"):
                     db_conn.execute("INSERT INTO inventory (name, qty, price) VALUES (?,?,?)", (n, q, p))
                     db_conn.commit()
@@ -124,50 +125,66 @@ elif choice == "🛠 Виробництво":
     st.header("📋 Журнал виробництва")
     df_orders = pd.read_sql_query("SELECT * FROM orders ORDER BY id DESC", db_conn)
     for _, row in df_orders.iterrows():
-        with st.expander(f"📦 №{row['id']} | {row['customer']} | {row['detail']} ({row['status']})"):
-            st.write(f"Кількість: {row['qty']} | Ціна: {row['price']} грн")
-            statuses = ["Нове", "Обробка", "Готово"]
-            new_s = st.selectbox("Змінити статус", statuses, index=statuses.index(row['status']) if row['status'] in statuses else 0, key=f"ord_{row['id']}")
-            if st.button("Зберегти", key=f"btn_{row['id']}"):
-                db_conn.execute("UPDATE orders SET status=? WHERE id=?", (new_s, row['id']))
-                db_conn.commit()
-                add_log(username, f"Замовлення №{row['id']} -> {new_s}")
-                st.rerun()
+        status_color = "🟢" if row['status'] == "Готово" else "🟡" if row['status'] == "Обробка" else "⚪"
+        with st.expander(f"{status_color} №{row['id']} | {row['customer']} | {row['detail']}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(f"**Кількість:** {row['qty']} шт.")
+                # ФІНАНСИ ТІЛЬКИ ДЛЯ АДМІНА
+                if user_role == "Адмін":
+                    st.write(f"**Ціна за од.:** {row['price']} грн")
+                    st.write(f"**Сума:** {row['qty'] * row['price']} грн")
+            with c2:
+                statuses = ["Нове", "Обробка", "Готово"]
+                idx = statuses.index(row['status']) if row['status'] in statuses else 0
+                new_s = st.selectbox("Статус", statuses, index=idx, key=f"ord_{row['id']}")
+                if st.button("Зберегти статус", key=f"btn_{row['id']}"):
+                    db_conn.execute("UPDATE orders SET status=? WHERE id=?", (new_s, row['id']))
+                    db_conn.commit()
+                    add_log(username, f"Замовлення №{row['id']} -> {new_s}")
+                    st.rerun()
 
 elif choice == "📊 Аналітика":
-    st.header("📈 Фінанси")
-    inv_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
-    ord_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
-    st.columns(2)[0].metric("Склад", f"{inv_val:,.2f} грн")
-    st.columns(2)[1].metric("В роботі", f"{ord_val:,.2f} грн")
+    st.header("📈 Фінансова аналітика")
+    if user_role == "Адмін":
+        inv_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
+        ord_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
+        st.columns(2)[0].metric("Вартість складу", f"{inv_val:,.2f} грн")
+        st.columns(2)[1].metric("Замовлення в роботі (дохід)", f"{ord_val:,.2f} грн")
+    else:
+        st.warning("🔒 Доступ до фінансових звітів обмежено. Зверніться до адміністратора.")
 
-elif choice == "📝 Нове замовлення":
-    st.header("🆕 Нове замовлення")
+elif choice == "📝 Нове замовлення" and user_role == "Адмін":
+    st.header("🆕 Реєстрація замовлення")
     with st.form("new_o"):
         c, d = st.text_input("Замовник"), st.text_input("Виріб")
-        qo, po = st.number_input("Кількість", min_value=1), st.number_input("Ціна за од.", min_value=0.0)
+        qo, po = st.number_input("Кількість", min_value=1), st.number_input("Ціна продажу", min_value=0.0)
         if st.form_submit_button("Створити"):
             db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status) VALUES (?,?,?,?,'Нове')", (c, d, qo, po))
             db_conn.commit()
-            st.success("Додано!")
+            add_log(username, f"Нове замовлення: {c} - {d}")
+            st.success("Замовлення додано!")
 
-elif choice == "⚙️ Персонал":
-    st.header("👥 Персонал")
+elif choice == "⚙️ Персонал" and user_role == "Адмін":
+    st.header("👥 Керування персоналом")
     st.table(pd.read_sql_query("SELECT username, role FROM users", db_conn))
-    with st.expander("➕ Додати працівника"):
-        u = st.text_input("Логін")
-        p = st.text_input("Пароль")
-        r = st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
-        if st.button("Створити"):
-            try:
-                db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
-                db_conn.commit()
-                st.rerun()
-            except: st.error("Помилка (логін зайнятий)")
+    with st.expander("➕ Реєстрація нового працівника"):
+        with st.form("u_reg"):
+            u = st.text_input("Логін")
+            p = st.text_input("Пароль")
+            r = st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
+            if st.form_submit_button("Створити"):
+                try:
+                    db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+                    db_conn.commit()
+                    add_log(username, f"Створив користувача {u}")
+                    st.success(f"Працівника {u} додано!")
+                    st.rerun()
+                except: st.error("Логін вже зайнятий!")
 
-elif choice == "📜 Журнал дій":
-    st.header("📜 Журнал")
-    st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 100", db_conn), use_container_width=True)
+elif choice == "📜 Журнал дій" and user_role == "Адмін":
+    st.header("📜 Журнал подій")
+    st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 150", db_conn), use_container_width=True)
 
 db_conn.close()
 
