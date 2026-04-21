@@ -9,25 +9,34 @@ st.set_page_config(page_title="Factory ERP Pro", layout="wide")
 
 # --- 2. КОНФІГУРАЦІЯ ТА ПАПКИ ---
 DB_NAME = 'factory.db'
-UPLOAD_DIR = 'files' # Папка для файлів
+UPLOAD_DIR = 'files'
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# Розширення для SolidWorks та SolidCAM
-ALLOWED_EXT = [".png", ".pdf", ".txt", ".bin", ".sldprt", ".sldasm", ".slddrw", ".prt", ".asm", ".drw", ".gcode", ".nc", ".tap"]
-
+# --- 3. ІНІЦІАЛІЗАЦІЯ БД (З ВИПРАВЛЕННЯМ ПОМИЛКИ) ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # Створюємо основні таблиці
     cursor.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, name TEXT, qty REAL, price REAL)')
-    # Додано колонку file_path для збереження шляху до файлу
     cursor.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, customer TEXT, detail TEXT, qty INTEGER, price REAL, status TEXT, file_path TEXT)')
     cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)')
     
+    # --- ВИПРАВЛЕННЯ ПОМИЛКИ ТУТ ---
+    # Спробуємо додати колонку file_path, якщо її немає (для старих БД)
+    try:
+        cursor.execute('ALTER TABLE orders ADD COLUMN file_path TEXT')
+    except sqlite3.OperationalError:
+        pass # Колонка вже існує, нічого не робимо
+    # -------------------------------
+
+    # Створюємо адміна за замовчуванням
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO users (username, password, role, last_seen) VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now(),))
+    
     conn.commit()
     conn.close()
 
@@ -39,7 +48,7 @@ def add_log(username, action):
                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(username), action))
         conn.commit()
 
-# --- 3. АВТОРИЗАЦІЯ ---
+# --- 4. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Система Заводу")
     user = st.text_input("Логін")
@@ -62,7 +71,7 @@ with sqlite3.connect(DB_NAME) as conn:
     conn.execute("UPDATE users SET last_seen = ? WHERE username = ?", (datetime.now(), st.session_state["username"]))
     conn.commit()
 
-# --- 4. SIDEBAR ---
+# --- 5. SIDEBAR ---
 user_role = st.session_state["role"]
 username = st.session_state["username"]
 db_conn = sqlite3.connect(DB_NAME)
@@ -70,7 +79,7 @@ db_conn = sqlite3.connect(DB_NAME)
 st.sidebar.title(f"👤 {username}")
 st.sidebar.info(f"Роль: {user_role}")
 
-# БЛОК "ХТО ОНЛАЙН"
+# Список онлайн
 st.sidebar.markdown("---")
 st.sidebar.subheader("🟢 Зараз у системі")
 five_mins_ago = datetime.now() - timedelta(minutes=5)
@@ -87,7 +96,7 @@ if user_role == "Адмін":
     menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- 5. РОЗДІЛИ ---
+# --- 6. РОЗДІЛИ ---
 
 if choice == "📦 Склад":
     st.header("📦 Склад матеріалів")
@@ -117,20 +126,20 @@ elif choice == "🛠 Виробництво":
             c1, c2 = st.columns(2)
             with c1:
                 st.write(f"**Кількість:** {row['qty']} шт.")
-                if row['file_path']:
+                if row['file_path'] and os.path.exists(row['file_path']):
                     file_name = os.path.basename(row['file_path'])
                     with open(row['file_path'], "rb") as f:
-                        st.download_button(f"📥 Завантажити файл: {file_name}", f, file_name=file_name, key=f"dl_{row['id']}")
+                        st.download_button(f"📥 Скачати: {file_name}", f, file_name=file_name, key=f"dl_{row['id']}")
                 else:
-                    st.info("Файлів не додано")
+                    st.info("Тех. документація відсутня")
                 
                 if user_role == "Адмін":
-                    st.write(f"**Ціна за од.:** {row['price']} грн")
+                    st.write(f"**Ціна:** {row['price']} грн")
             with c2:
                 statuses = ["Нове", "Обробка", "Готово"]
                 idx = statuses.index(row['status']) if row['status'] in statuses else 0
                 new_s = st.selectbox("Статус", statuses, index=idx, key=f"ord_{row['id']}")
-                if st.button("Зберегти статус", key=f"btn_{row['id']}"):
+                if st.button("Оновити статус", key=f"btn_{row['id']}"):
                     db_conn.execute("UPDATE orders SET status=? WHERE id=?", (new_s, row['id']))
                     db_conn.commit()
                     add_log(username, f"Замовлення №{row['id']} -> {new_s}")
@@ -141,19 +150,19 @@ elif choice == "📊 Аналітика":
     if user_role == "Адмін":
         inv_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
         ord_val = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
-        st.columns(2)[0].metric("Вартість складу", f"{inv_val:,.2f} грн")
-        st.columns(2)[1].metric("Замовлення в роботі (дохід)", f"{ord_val:,.2f} грн")
+        st.columns(2)[0].metric("Склад", f"{inv_val:,.2f} грн")
+        st.columns(2)[1].metric("В роботі", f"{ord_val:,.2f} грн")
     else:
-        st.warning("🔒 Доступ обмежено.")
+        st.warning("Доступ обмежений")
 
 elif choice == "📝 Нове замовлення" and user_role == "Адмін":
     st.header("🆕 Реєстрація замовлення")
     with st.form("new_o", clear_on_submit=True):
-        c, d = st.text_input("Замовник"), st.text_input("Виріб/Деталь")
+        c, d = st.text_input("Замовник"), st.text_input("Виріб")
         qo, po = st.number_input("Кількість", min_value=1), st.number_input("Ціна продажу", min_value=0.0)
-        uploaded_file = st.file_uploader("Додати тех. документацію (PNG, PDF, TXT, BIN, SolidWorks)", type=["png", "pdf", "txt", "bin", "sldprt", "sldasm", "slddrw", "nc", "tap"])
+        uploaded_file = st.file_uploader("Завантажити креслення (PNG, PDF, TXT, SolidWorks, NC)", type=["png", "pdf", "txt", "bin", "sldprt", "sldasm", "slddrw", "nc", "tap"])
         
-        if st.form_submit_button("Створити замовлення"):
+        if st.form_submit_button("Додати"):
             file_path = None
             if uploaded_file:
                 file_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
@@ -163,28 +172,24 @@ elif choice == "📝 Нове замовлення" and user_role == "Адмін
             db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, file_path) VALUES (?,?,?,?,'Нове',?)", 
                             (c, d, qo, po, file_path))
             db_conn.commit()
-            add_log(username, f"Нове замовлення з файлом: {c}")
-            st.success("Додано!")
+            add_log(username, f"Нове замовлення: {c}")
+            st.success("Успішно додано!")
 
 elif choice == "⚙️ Персонал" and user_role == "Адмін":
     st.header("👥 Персонал")
     st.table(pd.read_sql_query("SELECT username, role FROM users", db_conn))
-    with st.expander("➕ Новий працівник"):
-        u = st.text_input("Логін")
-        p = st.text_input("Пароль")
-        r = st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
-        if st.button("Створити"):
-            try:
-                db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
-                db_conn.commit()
-                st.rerun()
-            except: st.error("Логін зайнятий")
+    with st.expander("➕ Реєстрація"):
+        with st.form("u_reg"):
+            u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
+            if st.form_submit_button("Створити"):
+                try:
+                    db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+                    db_conn.commit()
+                    st.rerun()
+                except: st.error("Логін зайнятий")
 
 elif choice == "📜 Журнал дій" and user_role == "Адмін":
     st.header("📜 Журнал")
-    st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 150", db_conn), use_container_width=True)
+    st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 100", db_conn), use_container_width=True)
 
 db_conn.close()
-
-
-
