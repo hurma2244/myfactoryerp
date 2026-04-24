@@ -14,7 +14,7 @@ UPLOAD_DIR = 'order_files'
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# --- 3. ІНІЦІАЛІЗАЦІЯ БД ---
+# --- 3. ІНІЦІАЛІЗАЦІЯ БД (З ПРИМУСОВИМ СКИНУТИМ ПАРОЛЕМ) ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -23,15 +23,15 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)')
     cursor.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT)')
     
-    # Автоматична міграція бази (додавання колонок)
+    # Міграція: додаємо колонку file_path, якщо її немає
     try:
         cursor.execute('ALTER TABLE orders ADD COLUMN file_path TEXT')
     except sqlite3.OperationalError:
         pass
 
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone() == 0:
-        cursor.execute("INSERT INTO users (username, password, role, last_seen) VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now(),))
+    # ГАРАНТОВАНИЙ ВХІД: Перезаписуємо адміна при кожному запуску
+    cursor.execute("INSERT OR REPLACE INTO users (username, password, role, last_seen) VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now(),))
+    
     conn.commit()
     conn.close()
 
@@ -46,11 +46,14 @@ def add_log(username, action):
 # --- 4. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Система Заводу")
-    user = st.text_input("Логін")
-    pwd = st.text_input("Пароль", type="password")
+    st.info("Вхід для адміна: **admin** / **admin123**")
+    
+    user_in = st.text_input("Логін").strip()
+    pwd_in = st.text_input("Пароль", type="password").strip()
+    
     if st.button("Увійти"):
         with sqlite3.connect(DB_NAME) as conn:
-            res = conn.execute("SELECT username, role FROM users WHERE username=? AND password=?", (user, pwd)).fetchone()
+            res = conn.execute("SELECT username, role FROM users WHERE username=? AND password=?", (user_in, pwd_in)).fetchone()
             if res:
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = res[0]
@@ -61,7 +64,7 @@ if "authenticated" not in st.session_state:
                 st.error("❌ Невірний логін або пароль")
     st.stop()
 
-# Оновлення активності онлайн
+# Оновлення активності
 with sqlite3.connect(DB_NAME) as conn:
     conn.execute("UPDATE users SET last_seen = ? WHERE username = ?", (datetime.now(), st.session_state["username"]))
     conn.commit()
@@ -74,7 +77,7 @@ db_conn = sqlite3.connect(DB_NAME)
 st.sidebar.title(f"👤 {username}")
 st.sidebar.info(f"Роль: {user_role}")
 
-st.sidebar.subheader("🟢 Зараз у системі")
+st.sidebar.subheader("🟢 Зараз онлайн")
 five_mins_ago = datetime.now() - timedelta(minutes=5)
 online_users = pd.read_sql_query("SELECT username FROM users WHERE last_seen > ?", db_conn, params=(five_mins_ago,))
 for u in online_users['username']:
@@ -88,7 +91,7 @@ menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Скла
 if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- 6. РОЗДІЛИ ---
+# --- 6. ЛОГІКА РОЗДІЛІВ ---
 
 if choice == "📦 Склад":
     st.header("📦 Склад матеріалів")
@@ -102,16 +105,14 @@ if choice == "📦 Склад":
             c1, c2, c3 = st.columns(3)
             mat_name = c1.selectbox("Оберіть матеріал", df_inv['name'].tolist())
             cur_qty = float(df_inv[df_inv['name'] == mat_name]['qty'].values[0])
-            new_qty = c2.number_input(f"Нова кількість", value=cur_qty)
+            new_qty = c2.number_input(f"Нова к-ть (було {cur_qty})", value=cur_qty)
             if c3.button("✅ Оновити"):
-                db_conn.execute("UPDATE inventory SET qty = ? WHERE name = ?", (new_qty, mat_name))
+                db_conn.execute("UPDATE inventory SET qty=? WHERE name=?", (new_qty, mat_name))
                 db_conn.commit()
-                add_log(username, f"Змінив залишок {mat_name} на {new_qty}")
+                add_log(username, f"Змінив {mat_name} на {new_qty}")
                 st.rerun()
         
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1.expander("➕ Додати нову позицію"):
+        with st.expander("➕ Додати нову позицію"):
             with st.form("add_mat"):
                 n = st.text_input("Назва")
                 q = st.number_input("Кількість", min_value=0.0)
@@ -129,37 +130,32 @@ elif choice == "🛠 Виробництво":
             c1, c2 = st.columns(2)
             with c1:
                 st.write(f"**Кількість:** {row['qty']} шт.")
-                
-                # ВИПРАВЛЕНА ЛОГІКА ФАЙЛІВ (NotADirectoryError fix)
                 if row['file_path'] and os.path.exists(row['file_path']):
-                    st.write("**Файли тех. документації:**")
+                    st.write("**Файли:**")
                     if os.path.isdir(row['file_path']):
                         for f_name in os.listdir(row['file_path']):
                             f_p = os.path.join(row['file_path'], f_name)
                             with open(f_p, "rb") as fb:
                                 st.download_button(f"📥 {f_name}", fb, file_name=f_name, key=f"dl_{row['id']}_{f_name}")
                     else:
-                        f_name = os.path.basename(row['file_path'])
+                        f_n = os.path.basename(row['file_path'])
                         with open(row['file_path'], "rb") as fb:
-                            st.download_button(f"📥 {f_name}", fb, file_name=f_name, key=f"dl_s_{row['id']}")
-                else:
-                    st.info("Файли відсутні")
+                            st.download_button(f"📥 {f_n}", fb, file_name=f_n, key=f"dl_s_{row['id']}")
+                else: st.info("Файлів немає")
 
                 if user_role == "Адмін":
-                    st.write(f"**Ціна продажу:** {row['price']} грн")
-                    if st.button("🗑️ ВИДАЛИТИ ЗАМОВЛЕННЯ", key=f"del_{row['id']}"):
+                    st.write(f"**Ціна:** {row['price']} грн")
+                    if st.button("🗑️ ВИДАЛИТИ", key=f"del_{row['id']}"):
                         if row['file_path'] and os.path.exists(row['file_path']):
                             if os.path.isdir(row['file_path']): shutil.rmtree(row['file_path'])
                             else: os.remove(row['file_path'])
                         db_conn.execute("DELETE FROM orders WHERE id=?", (row['id'],))
                         db_conn.commit()
-                        add_log(username, f"Видалив замовлення №{row['id']}")
                         st.rerun()
             with c2:
-                st.write("**Керування статусом:**")
                 statuses = ["Нове", "Обробка", "Готово"]
                 idx = statuses.index(row['status']) if row['status'] in statuses else 0
-                new_s = st.selectbox("Змінити на:", statuses, index=idx, key=f"st_{row['id']}")
+                new_s = st.selectbox("Змінити статус", statuses, index=idx, key=f"st_{row['id']}")
                 if st.button("Зберегти", key=f"bt_{row['id']}"):
                     db_conn.execute("UPDATE orders SET status=? WHERE id=?", (new_s, row['id']))
                     db_conn.commit()
@@ -168,12 +164,10 @@ elif choice == "🛠 Виробництво":
 elif choice == "📝 Нове замовлення" and user_role == "Адмін":
     st.header("🆕 Нове замовлення")
     with st.form("new_order", clear_on_submit=True):
-        c, d = st.text_input("Замовник"), st.text_input("Деталь/Виріб")
+        c, d = st.text_input("Замовник"), st.text_input("Виріб")
         qo, po = st.number_input("Кількість", min_value=1), st.number_input("Ціна продажу", min_value=0.0)
-        # МУЛЬТИЗАВАНТАЖЕННЯ ФАЙЛІВ
-        uploaded_files = st.file_uploader("Додати файли (SW, PDF, NC, PNG...)", accept_multiple_files=True)
-        
-        if st.form_submit_button("Створити замовлення"):
+        uploaded_files = st.file_uploader("Завантажити файли (SW, PDF...)", accept_multiple_files=True)
+        if st.form_submit_button("Створити"):
             order_path = None
             if uploaded_files:
                 order_path = os.path.join(UPLOAD_DIR, f"order_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
@@ -181,20 +175,16 @@ elif choice == "📝 Нове замовлення" and user_role == "Адмін
                 for f in uploaded_files:
                     with open(os.path.join(order_path, f.name), "wb") as fs:
                         fs.write(f.getbuffer())
-            
-            db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, file_path) VALUES (?,?,?,?,'Нове',?)", 
-                            (c, d, qo, po, order_path))
+            db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, file_path) VALUES (?,?,?,?,'Нове',?)", (c, d, qo, po, order_path))
             db_conn.commit()
-            add_log(username, f"Додав замовлення: {c}")
-            st.success("Додано успішно!")
+            st.success("Додано!")
 
 elif choice == "📊 Аналітика" and user_role == "Адмін":
-    st.header("📈 Фінансова аналітика")
-    total_inv = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
-    total_ord = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
-    c1, c2 = st.columns(2)
-    c1.metric("Капітал у складі", f"{total_inv:,.2f} грн")
-    c2.metric("Очікуваний дохід", f"{total_ord:,.2f} грн")
+    st.header("📈 Фінанси")
+    t_inv = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
+    t_ord = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
+    st.metric("Вартість складу", f"{t_inv:,.2f} грн")
+    st.metric("Очікуваний дохід", f"{t_ord:,.2f} грн")
 
 elif choice == "⚙️ Персонал" and user_role == "Адмін":
     st.header("👥 Персонал")
@@ -206,10 +196,10 @@ elif choice == "⚙️ Персонал" and user_role == "Адмін":
                 db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
                 db_conn.commit()
                 st.rerun()
-            except: st.error("Помилка (логін зайнятий)")
+            except: st.error("Логін зайнятий")
 
 elif choice == "📜 Журнал дій" and user_role == "Адмін":
     st.header("📜 Журнал")
-    st.dataframe(pd.read_sql_query("SELECT timestamp, username, action FROM logs ORDER BY id DESC LIMIT 200", db_conn), use_container_width=True)
+    st.dataframe(pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC LIMIT 100", db_conn), use_container_width=True)
 
 db_conn.close()
