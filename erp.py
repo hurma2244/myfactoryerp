@@ -46,8 +46,7 @@ def add_log(username, action):
 # --- 4. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Система Заводу")
-    st.info("Вхід для адміна: **admin** / **admin123**")
-    
+   
     user_in = st.text_input("Логін").strip()
     pwd_in = st.text_input("Пароль", type="password").strip()
     
