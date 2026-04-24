@@ -44,7 +44,6 @@ def add_log(username, action):
 # --- 4. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Система Заводу")
-    st.info("Логін: **admin** | Пароль: **admin123**")
     u_in = st.text_input("Логін").strip()
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
