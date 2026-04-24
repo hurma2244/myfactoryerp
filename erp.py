@@ -5,16 +5,16 @@ import os
 import shutil
 from datetime import datetime, timedelta
 
-# --- 1. НАСТРОЙКИ СТРАНИЦЫ ---
+# --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Pro", layout="wide")
 
-# --- 2. КОНФИГУРАЦИЯ ---
+# --- 2. КОНФІГУРАЦІЯ ---
 DB_NAME = 'factory.db'
 UPLOAD_DIR = 'order_files'
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# --- 3. ИНИЦИАЛИЗАЦИЯ БД ---
+# --- 3. ІНІЦІАЛІЗАЦІЯ БД ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -28,7 +28,7 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # Принудительный сброс пароля админа для входа
+    # Примусове оновлення адміна
     cursor.execute("INSERT OR REPLACE INTO users (username, password, role, last_seen) VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now(),))
     conn.commit()
     conn.close()
@@ -41,9 +41,10 @@ def add_log(username, action):
                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(username), action))
         conn.commit()
 
-# --- 4. АВТОРИЗАЦИЯ ---
+# --- 4. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Система Заводу")
+    st.info("Логін: **admin** | Пароль: **admin123**")
     u_in = st.text_input("Логін").strip()
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
@@ -59,12 +60,12 @@ if "authenticated" not in st.session_state:
                 st.error("❌ Невірний логін або пароль")
     st.stop()
 
-# Обновление онлайна
+# Оновлення онлайну
 with sqlite3.connect(DB_NAME) as conn:
     conn.execute("UPDATE users SET last_seen = ? WHERE username = ?", (datetime.now(), st.session_state["username"]))
     conn.commit()
 
-# --- 5. ИНТЕРФЕЙС ---
+# --- 5. ІНТЕРФЕЙС ---
 user_role = st.session_state["role"]
 username = st.session_state["username"]
 db_conn = sqlite3.connect(DB_NAME)
@@ -86,7 +87,7 @@ menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Скла
 if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал", "📜 Журнал дій"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- ЛОГИКА РАЗДЕЛОВ ---
+# --- ЛОГІКА РОЗДІЛІВ ---
 
 if choice == "📊 Аналітика":
     st.header("📈 Фінанси")
@@ -189,20 +190,51 @@ elif choice == "📝 Нове замовлення" and user_role == "Адмін
             st.success("Додано!")
 
 elif choice == "⚙️ Персонал" and user_role == "Адмін":
-    st.header("👥 Персонал")
-    st.table(pd.read_sql_query("SELECT username, role FROM users", db_conn))
-    with st.form("u_add"):
-        u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
-        if st.form_submit_button("Додати"):
-            try:
-                db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+    st.header("👥 Керування персоналом")
+    df_users = pd.read_sql_query("SELECT username, role FROM users", db_conn)
+    st.table(df_users)
+    
+    col_u1, col_u2 = st.columns(2)
+    
+    with col_u1.expander("➕ Додати нового працівника"):
+        with st.form("u_add"):
+            u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
+            if st.form_submit_button("Створити"):
+                try:
+                    db_conn.execute("INSERT INTO users (username, password, role, last_seen) VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+                    db_conn.commit()
+                    add_log(username, f"Створив користувача {u}")
+                    st.rerun()
+                except: st.error("Логін зайнятий")
+
+    with col_u2.expander("📝 Редагувати / Видалити"):
+        target_user = st.selectbox("Оберіть користувача", df_users['username'].tolist())
+        if target_user == 'admin':
+            st.warning("Головного адміна не можна видалити або змінити тут.")
+        else:
+            new_login = st.text_input("Новий логін", value=target_user)
+            new_role = st.selectbox("Нова роль", ["Робочий", "Конструктор", "Адмін"], 
+                                    index=["Робочий", "Конструктор", "Адмін"].index(df_users[df_users['username']==target_user]['role'].iloc[0]))
+            
+            c_u1, c_u2 = st.columns(2)
+            if c_u1.button("💾 Зберегти зміни"):
+                try:
+                    db_conn.execute("UPDATE users SET username=?, role=? WHERE username=?", (new_login, new_role, target_user))
+                    db_conn.commit()
+                    add_log(username, f"Змінив дані {target_user} на {new_login}")
+                    st.rerun()
+                except: st.error("Помилка оновлення (можливо, новий логін зайнятий)")
+            
+            if c_u2.button("🗑️ Видалити аккаунт"):
+                db_conn.execute("DELETE FROM users WHERE username=?", (target_user,))
                 db_conn.commit()
+                add_log(username, f"Видалив користувача {target_user}")
                 st.rerun()
-            except: st.error("Логін зайнятий")
 
 elif choice == "📜 Журнал дій" and user_role == "Адмін":
     st.header("📜 Журнал")
-    st.dataframe(pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC LIMIT 100", db_conn), use_container_width=True)
+    st.dataframe(pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC LIMIT 150", db_conn), use_container_width=True)
 
 db_conn.close()
+
 
