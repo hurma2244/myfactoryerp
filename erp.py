@@ -92,27 +92,31 @@ choice = st.sidebar.selectbox("Меню", menu)
 
 # --- 6. ЛОГІКА РОЗДІЛІВ ---
 
-if choice == "📦 Склад":
+elif choice == "📦 Склад":
     st.header("📦 Склад матеріалів")
     query = "SELECT name, qty, price FROM inventory" if user_role == "Адмін" else "SELECT name, qty FROM inventory"
     df_inv = pd.read_sql_query(query, db_conn)
     st.dataframe(df_inv, use_container_width=True)
 
     if user_role == "Адмін":
+        # Блок швидкого корегування (залишаємо як є)
         st.subheader("📝 Швидке корегування залишків")
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             mat_name = c1.selectbox("Оберіть матеріал", df_inv['name'].tolist())
             cur_qty = float(df_inv[df_inv['name'] == mat_name]['qty'].values[0])
-            new_qty = c2.number_input(f"Нова к-ть (було {cur_qty})", value=cur_qty)
+            new_qty = c2.number_input(f"Нова к-ть (зараз {cur_qty})", value=cur_qty)
             if c3.button("✅ Оновити"):
                 db_conn.execute("UPDATE inventory SET qty=? WHERE name=?", (new_qty, mat_name))
                 db_conn.commit()
-                add_log(username, f"Змінив {mat_name} на {new_qty}")
                 st.rerun()
+
+        st.divider()
+        col1, col2 = st.columns(2)
         
-        with st.expander("➕ Додати нову позицію"):
-            with st.form("add_mat"):
+        # 1. Додавання
+        with col1.expander("➕ Додати нову позицію"):
+            with st.form("add_mat_f"):
                 n = st.text_input("Назва")
                 q = st.number_input("Кількість", min_value=0.0)
                 p = st.number_input("Ціна закупки", min_value=0.0)
@@ -120,6 +124,19 @@ if choice == "📦 Склад":
                     db_conn.execute("INSERT INTO inventory (name, qty, price) VALUES (?,?,?)", (n, q, p))
                     db_conn.commit()
                     st.rerun()
+
+        # 2. ВИДАЛЕННЯ (Додана кнопка)
+        with col2.expander("🗑️ Видалити позицію зі складу"):
+            if not df_inv.empty:
+                to_del = st.selectbox("Оберіть матеріал для видалення", df_inv['name'].tolist(), key="del_mat_s")
+                if st.button("🚨 Видалити остаточно"):
+                    db_conn.execute("DELETE FROM inventory WHERE name=?", (to_del,))
+                    db_conn.commit()
+                    add_log(username, f"Видалив зі складу: {to_del}")
+                    st.rerun()
+            else:
+                st.write("Склад порожній.")
+
 
 elif choice == "🛠 Виробництво":
     st.header("📋 Журнал виробництва")
