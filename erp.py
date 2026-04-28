@@ -12,8 +12,9 @@ DB_NAME = 'factory.db'
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003964597358"
 
-# --- 2. ФУНКЦІЇ TELEGRAM (ЗАХИСТ ВІД ПОМИЛОК ПАРСИНГУ) ---
+# --- 2. ФУНКЦІЇ TELEGRAM (ЗАХИСТ ВІД ПОМИЛОК) ---
 def send_db_backup():
+    """Надсилає актуальну базу в Telegram, збираючи адресу по частинах"""
     p1, p2, p3 = "https://api.", "telegram.org/bot", "/sendDocument"
     full_url = f"{p1}{p2}{TG_TOKEN}{p3}"
     try:
@@ -31,6 +32,7 @@ def send_db_backup():
     except Exception as e: return False, str(e)
 
 def send_file_to_tg(file_bytes, file_name, caption):
+    """Надсилає креслення у Telegram"""
     p1, p2, p3 = "https://api.", "telegram.org/bot", "/sendDocument"
     full_url = f"{p1}{p2}{TG_TOKEN}{p3}"
     try:
@@ -46,22 +48,23 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP)')
     
     cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Адмін', ?)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- 4. АВТОРИЗАЦІЯ ---
+# --- 4. АВТОРИЗАЦІЯ ТА ВІДНОВЛЕННЯ ---
 if "auth" not in st.session_state:
     st.title("🏭 ERP Factory (Safe Mode)")
     
-    with st.expander("🔄 ВІДНОВИТИ ДАНІ (з Telegram)"):
-        up_db = st.file_uploader("Завантажте factory.db", type="db")
-        if up_db and st.button("Відновити базу"):
+    with st.expander("🔄 ВІДНОВИТИ ДАНІ (якщо база зникла)"):
+        st.info("Завантажте останній файл factory.db з вашого Telegram-каналу")
+        up_db = st.file_uploader("Виберіть файл .db", type="db")
+        if up_db and st.button("Завантажити та відновити"):
             with open(DB_NAME, "wb") as f: f.write(up_db.getbuffer())
-            st.success("Дані відновлено! Перезавантажте сторінку.")
+            st.success("Базу успішно відновлено! Перезавантажте сторінку.")
             st.stop()
 
     u = st.text_input("Логін").strip()
@@ -77,7 +80,7 @@ if "auth" not in st.session_state:
         else: st.error("❌ Невірний логін або пароль")
     st.stop()
 
-# Оновлення активності
+# Оновлення активності онлайн
 db_conn = sqlite3.connect(DB_NAME)
 db_conn.execute("UPDATE users SET last_seen = ? WHERE username = ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state["user"]))
 db_conn.commit()
@@ -100,6 +103,13 @@ try:
     else: st.sidebar.write("Тільки ви")
 except: st.sidebar.write("Оновлення...")
 
+# КНОПКА ПЕРЕВІРКИ TELEGRAM
+st.sidebar.markdown("---")
+if st.sidebar.button("📤 Перевірити Telegram"):
+    success, msg = send_db_backup()
+    if success: st.sidebar.success("✅ Зв'язок є! Файл у Telegram.")
+    else: st.sidebar.error(f"❌ {msg}")
+
 if st.sidebar.button("Вийти"):
     st.session_state.clear()
     st.rerun()
@@ -113,6 +123,7 @@ choice = st.sidebar.selectbox("Меню", menu)
 
 # --- 6. РОЗДІЛИ ---
 
+# --- АНАЛІТИКА ---
 if choice == "📊 Аналітика" and user_role == "Адмін":
     st.header("📈 Фінансова аналітика")
     inv_v = pd.read_sql_query("SELECT SUM(qty * price) as s FROM inventory", db_conn)['s'].iloc[0] or 0
@@ -121,6 +132,7 @@ if choice == "📊 Аналітика" and user_role == "Адмін":
     c1.metric("Капітал на складі", f"{inv_v:,.2f} грн")
     c2.metric("Очікуваний дохід", f"{ord_v:,.2f} грн")
 
+# --- СКЛАД ---
 elif choice == "📦 Склад":
     st.header("📦 Склад")
     query = "SELECT name, qty, price FROM inventory ORDER BY name" if user_role == "Адмін" else "SELECT name, qty FROM inventory ORDER BY name"
@@ -134,30 +146,31 @@ elif choice == "📦 Склад":
             mat = c1.selectbox("Матеріал", df_inv['name'].tolist())
             cur_q = float(df_inv[df_inv['name'] == mat]['qty'].iloc[0])
             new_q = c2.number_input("Нова к-ть", value=cur_q)
-            if c3.button("Оновити"):
+            if c3.button("✅ Оновити"):
                 db_conn.execute("UPDATE inventory SET qty=? WHERE name=?", (new_q, mat))
                 db_conn.commit()
                 send_db_backup()
                 st.rerun()
         
         col1, col2 = st.columns(2)
-        with col1.expander("➕ Додати"):
+        with col1.expander("➕ Додати позицію"):
             with st.form("add_mat"):
-                n, q, p = st.text_input("Назва"), st.number_input("К-ть"), st.number_input("Ціна закупки")
+                n, q, p = st.text_input("Назва"), st.number_input("К-ть", min_value=0.0), st.number_input("Ціна закупки")
                 if st.form_submit_button("Зберегти"):
                     db_conn.execute("INSERT INTO inventory (name, qty, price) VALUES (?,?,?)", (n, q, p))
                     db_conn.commit()
                     send_db_backup()
                     st.rerun()
-        with col2.expander("🗑️ Видалити"):
+        with col2.expander("🗑️ Видалити позицію"):
             if not df_inv.empty:
                 to_del = st.selectbox("Що видалити?", df_inv['name'].tolist(), key="del_inv")
-                if st.button("Видалити позицію"):
+                if st.button("Видалити назавжди"):
                     db_conn.execute("DELETE FROM inventory WHERE name=?", (to_del,))
                     db_conn.commit()
                     send_db_backup()
                     st.rerun()
 
+# --- ВИРОБНИЦТВО ---
 elif choice == "🛠 Виробництво":
     st.header("🛠 Виробництво")
     df_o = pd.read_sql_query("SELECT * FROM orders ORDER BY id DESC", db_conn)
@@ -184,6 +197,7 @@ elif choice == "🛠 Виробництво":
                     send_db_backup()
                     st.rerun()
 
+# --- НОВЕ ЗАМОВЛЕННЯ ---
 elif choice == "📝 Нове замовлення" and user_role == "Адмін":
     st.header("🆕 Нове замовлення")
     with st.form("n_ord", clear_on_submit=True):
@@ -197,8 +211,9 @@ elif choice == "📝 Нове замовлення" and user_role == "Адмін
             db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, has_files) VALUES (?,?,?,?,'Нове',?)", (c, d, q, p, has_f))
             db_conn.commit()
             send_db_backup()
-            st.success("✅ Створено! Файли та базу надіслано в Telegram.")
+            st.success("✅ Створено! Файли надіслано в Telegram.")
 
+# --- ПЕРСОНАЛ ---
 elif choice == "⚙️ Персонал" and user_role == "Адмін":
     st.header("👥 Персонал")
     users = pd.read_sql_query("SELECT username, role FROM users", db_conn)
