@@ -7,15 +7,23 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (ПЕРЕВІРЕНИЙ URI) ---
+# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНЕ ФОРМУВАННЯ URI) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Чистий рядок підключення без зайвих знаків
-DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
+# Пропишіть дані окремо, щоб уникнути помилок синтаксису в посиланні
+DB_USER = "postgres.sumpnxmxpdzwchanewnj"
+DB_PASS = "qWeRtY1234Qrohjt"
+DB_HOST = "://supabase.com"
+DB_PORT = "6543"
+DB_NAME = "postgres"
 
-# Створення двигуна з коректними параметрами
+# Збираємо рядок автоматично
+DB_URI = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+
+# Створення двигуна
 engine = create_engine(DB_URI, pool_pre_ping=True)
+
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
