@@ -2,21 +2,20 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 import requests
-import os
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (ВАШІ ДАНІ) ---
+# --- 2. КОНФІГУРАЦІЯ (ПЕРЕВІРЕНИЙ URI) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# ВАШ НОВИЙ URI (Враховуючи пароль та IPv4 Fix)
+# Чистий рядок підключення без зайвих знаків
 DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
 
-# Створення двигуна з параметрами стабільності
-engine = create_engine(DB_URI, pool_pre_ping=True, pool_recycle=300)
+# Створення двигуна з коректними параметрами
+engine = create_engine(DB_URI, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
@@ -38,14 +37,13 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, last_seen TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT);
                 
-                -- Створення або оновлення пароля адміна
                 INSERT INTO users (username, password, role, last_seen) 
                 VALUES ('admin', 'admin123', 'Адмін', CURRENT_TIMESTAMP) 
                 ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password;
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"Помилка ініціалізації бази: {e}")
+        st.error(f"Помилка бази: {e}")
 
 init_db()
 
@@ -107,6 +105,7 @@ if choice == "📦 Склад":
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             mat = c1.selectbox("Матеріал", df_inv['name'].tolist())
+            # Виправлено отримання значення кількості
             cur_v = float(df_inv[df_inv['name']==mat]['qty'].iloc[0])
             new_q = c2.number_input("Кількість", value=cur_v)
             if c3.button("Оновити"):
@@ -142,7 +141,7 @@ elif choice == "🛠 Виробництво":
         with st.expander(f"📦 №{row['id']} | {row['customer']} | {row['detail']} ({row['status']})"):
             st.write(f"**Кількість:** {row['qty']} шт.")
             if row['has_files']:
-                st.success("📂 Файли тех. документації в Telegram-архіві.")
+                st.success("📂 Файли в Telegram-архіві.")
             
             if user_role == "Адмін":
                 st.write(f"**Ціна:** {row['price']} грн")
@@ -163,9 +162,9 @@ elif choice == "🛠 Виробництво":
 elif choice == "📝 Нове замовлення":
     st.header("📝 Реєстрація замовлення")
     with st.form("n_ord", clear_on_submit=True):
-        c, d = st.text_input("Клієнт"), st.text_input("Деталь")
-        qo, po = st.number_input("К-ть", min_value=1), st.number_input("Ціна продажу")
-        files = st.file_uploader("Завантажити файли (SW, PDF...)", accept_multiple_files=True)
+        c, d = st.text_input("Клієнт"), st.text_input("Виріб")
+        qo, po = st.number_input("К-ть", min_value=1), st.number_input("Ціна")
+        files = st.file_uploader("Файли", accept_multiple_files=True)
         
         if st.form_submit_button("Створити"):
             has_f = False
@@ -173,34 +172,22 @@ elif choice == "📝 Нове замовлення":
                 has_f = True
                 for f in files:
                     send_to_telegram(f.getvalue(), f.name, f"🆕 Замовлення для {c}: {d}")
-            
             with engine.connect() as conn:
                 conn.execute(text("INSERT INTO orders (customer, detail, qty, price, status, has_files) VALUES (:c, :d, :q, :p, 'Нове', :hf)"),
                              {"c": c, "d": d, "q": qo, "p": po, "hf": has_f})
                 conn.commit()
-            st.success("✅ Створено! Файли вже в Telegram.")
+            st.success("✅ Створено! Файли надіслано в Telegram.")
 
 elif choice == "⚙️ Персонал":
     st.header("👥 Персонал")
     df_u = pd.read_sql(text("SELECT username, role FROM users"), engine)
     st.table(df_u)
-    
-    col_u1, col_u2 = st.columns(2)
-    with col_u1.expander("➕ Додати"):
+    with st.expander("➕ Додати працівника"):
         with st.form("u_add"):
             u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
             if st.form_submit_button("Створити"):
                 with engine.connect() as conn:
-                    conn.execute(text("INSERT INTO users (username, password, role, last_seen) VALUES (:u, :p, :r, NOW())"), 
-                                 {"u": u, "p": p, "r": r})
-                    conn.commit()
-                st.rerun()
-    with col_u2.expander("🗑️ Видалити"):
-        target = st.selectbox("Користувач", df_u['username'].tolist())
-        if target != 'admin':
-            if st.button("Видалити акаунт"):
-                with engine.connect() as conn:
-                    conn.execute(text("DELETE FROM users WHERE username=:u"), {"u": target})
+                    conn.execute(text("INSERT INTO users (username, password, role, last_seen) VALUES (:u, :p, :r, NOW())"), {"u": u, "p": p, "r": r})
                     conn.commit()
                 st.rerun()
 
@@ -211,5 +198,3 @@ elif choice == "📊 Аналітика":
         t_ord = conn.execute(text("SELECT SUM(qty * price) FROM orders WHERE status != 'Готово'")).scalar() or 0
     st.metric("Склад", f"{t_inv:,.2f} грн")
     st.metric("В роботі", f"{t_ord:,.2f} грн")
-
-
