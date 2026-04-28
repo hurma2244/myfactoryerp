@@ -14,21 +14,27 @@ TG_CHAT_ID = "-1003964597358" # ВАШ НОВИЙ ПРАВИЛЬНИЙ ID
 
 # --- 2. ФУНКЦИИ ТЕЛЕГРАМ ---
 def send_db_backup():
-    """Отправляет актуальную базу данных в Telegram"""
+    """Версія для діагностики — покаже помилку прямо на екрані"""
     url = f"https://telegram.org{TG_TOKEN}/sendDocument"
     try:
         if os.path.exists(DB_NAME):
             with open(DB_NAME, 'rb') as f:
-                r = requests.post(url, data={'chat_id': TG_CHAT_ID, 'caption': f"📦 Backup: {datetime.now().strftime('%d.%m %H:%M')}"}, files={'document': f})
-                if r.status_code == 200: st.toast("✅ Бекап надіслано!")
-    except: pass
-
-def send_file_to_tg(file_bytes, file_name, caption):
-    """Отправляет чертежи в Telegram"""
-    url = f"https://telegram.org{TG_TOKEN}/sendDocument"
-    try:
-        requests.post(url, data={'chat_id': TG_CHAT_ID, 'caption': caption}, files={'document': (file_name, file_bytes)})
-    except: pass
+                r = requests.post(
+                    url, 
+                    data={'chat_id': TG_CHAT_ID, 'caption': f"📦 Backup: {datetime.now().strftime('%d.%m %H:%M')}"}, 
+                    files={'document': f},
+                    timeout=15
+                )
+            
+            if r.status_code == 200:
+                st.toast("✅ Бекап надіслано в Telegram!")
+            else:
+                # ЦЕ ПОКАЖЕ РЕАЛЬНУ ПРИЧИНУ
+                st.error(f"❌ Telegram відхилив файл: {r.status_code} - {r.text}")
+        else:
+            st.error("❌ Файл бази даних factory.db не знайдено на сервері!")
+    except Exception as e:
+        st.error(f"❌ Помилка з'єднання: {e}")
 
 # --- 3. ИНИЦИАЛИЗАЦИЯ БД ---
 def init_db():
