@@ -12,7 +12,7 @@ TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
 # ЗАМІНІТЬ 'ПАРОЛЬ' НА ВАШ РЕАЛЬНИЙ ПАРОЛЬ ВІД БАЗИ SUPABASE
-DB_URI = "postgresql://postgres:ПАРОЛЬ@db.sumpnxmxpdzwchanewnj.supabase.co:5432/postgres"
+DB_URI = "postgresql://postgres:?b6wB!X&#fff8hW@db.sumpnxmxpdzwchanewnj.supabase.co:5432/postgres"
 
 engine = create_engine(DB_URI)
 
@@ -49,7 +49,6 @@ init_db()
 # --- 5. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 Factory ERP Cloud")
-    st.info("Логін: admin | Пароль: admin123")
     u_in = st.text_input("Логін").strip()
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
