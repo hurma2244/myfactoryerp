@@ -1,21 +1,30 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 import requests
+import os
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (ПРЯМЕ ПІДКЛЮЧЕННЯ БЕЗ ПОМИЛОК) ---
+# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД ПІДКЛЮЧЕННЯ) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# ПРЯМИЙ РЯДОК БЕЗ ЗАЙВИХ СИМВОЛІВ
-DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
+# Формуємо об'єкт посилання через інструменти SQLAlchemy (це прибере помилку ValueError)
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username="postgres.sumpnxmxpdzwchanewnj",
+    password="qWeRtY1234Qrohjt",
+    host="://supabase.com",
+    port=6543,
+    database="postgres",
+    query={"sslmode": "require"},
+)
 
 # Створення двигуна
-engine = create_engine(DB_URI, pool_pre_ping=True)
+engine = create_engine(db_url, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
@@ -55,8 +64,8 @@ if "authenticated" not in st.session_state:
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
         with engine.connect() as conn:
-            query = text("SELECT username, role FROM users WHERE username=:u AND password=:p")
-            res = conn.execute(query, {"u": u_in, "p": p_in}).fetchone()
+            res = conn.execute(text("SELECT username, role FROM users WHERE username=:u AND password=:p"), 
+                               {"u": u_in, "p": p_in}).fetchone()
             if res:
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = res[0]
@@ -93,8 +102,7 @@ menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Скла
 if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- 7. РОЗДІЛИ ---
-
+# --- 7. РОЗДІЛИ (БЕЗ ЗМІН) ---
 if choice == "📦 Склад":
     st.header("📦 Склад")
     df_inv = pd.read_sql(text("SELECT * FROM inventory ORDER BY name"), engine)
@@ -165,7 +173,7 @@ elif choice == "📝 Нове замовлення":
         d = st.text_input("Виріб")
         qo = st.number_input("Кількість", min_value=1)
         po = st.number_input("Ціна")
-        files = st.file_uploader("Файли", accept_multiple_files=True)
+        files = st.file_uploader("Завантажити файли", accept_multiple_files=True)
         
         if st.form_submit_button("Створити"):
             has_f = False
@@ -199,4 +207,3 @@ elif choice == "📊 Аналітика":
         t_ord = conn.execute(text("SELECT SUM(qty * price) FROM orders WHERE status != 'Готово'")).scalar() or 0
     st.metric("Склад", f"{t_inv:,.2f} грн")
     st.metric("В роботі", f"{t_ord:,.2f} грн")
-
