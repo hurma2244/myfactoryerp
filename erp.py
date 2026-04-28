@@ -9,18 +9,18 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Factory ERP Pro (Safe Mode)", layout="wide")
 
 DB_NAME = 'factory.db'
-# Ваш проверенный токен
+# Ваш токен и ID чата
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
-# Ваш правильный ID канала
 TG_CHAT_ID = "-1003964597358"
 
-# --- 2. ФУНКЦИИ TELEGRAM (ИСПРАВЛЕННЫЙ АДРЕС) ---
+# --- 2. ФУНКЦИИ TELEGRAM (ЗАЩИТА ОТ ОШИБОК ССЫЛКИ) ---
 def send_db_backup():
-    """Отправляет актуальную базу в Telegram (сборка адреса по частям)"""
-    base_url = "https://telegram.org"
-    method = "/sendDocument"
-    # Собираем адрес так, чтобы он не превращался в нерабочую ссылку
-    full_url = f"{base_url}{TG_TOKEN}{method}"
+    """Отправляет базу в Telegram, собирая адрес по частям для обхода ошибок парсинга"""
+    # Разбиваем ссылку, чтобы GitHub/Streamlit не «ломали» её
+    p1 = "https://api."
+    p2 = "telegram.org/bot"
+    p3 = "/sendDocument"
+    full_url = f"{p1}{p2}{TG_TOKEN}{p3}"
     
     try:
         if os.path.exists(DB_NAME):
@@ -41,9 +41,8 @@ def send_db_backup():
 
 def send_file_to_tg(file_bytes, file_name, caption):
     """Отправляет чертежи в Telegram"""
-    base_url = "https://telegram.org"
-    method = "/sendDocument"
-    full_url = f"{base_url}{TG_TOKEN}{method}"
+    p1, p2, p3 = "https://api.", "telegram.org/bot", "/sendDocument"
+    full_url = f"{p1}{p2}{TG_TOKEN}{p3}"
     try:
         requests.post(full_url, data={'chat_id': TG_CHAT_ID, 'caption': caption}, files={'document': (file_name, file_bytes)})
     except: pass
@@ -64,14 +63,14 @@ def init_db():
 
 init_db()
 
-# --- 4. АВТОРИЗАЦИЯ ---
+# --- 4. АВТОРИЗАЦИЯ И ВОССТАНОВЛЕНИЕ ---
 if "auth" not in st.session_state:
     st.title("🏭 ERP Factory (Safe Mode)")
     
-    with st.expander("🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ (если база обнулилась)"):
+    with st.expander("🔄 ВОССТАНОВИТЬ ДАННЫХ (если база обнулилась)"):
         st.info("Скачайте последний файл factory.db из вашего Telegram-канала и загрузите сюда")
         up_db = st.file_uploader("Выберите файл .db", type="db")
-        if up_db and st.button("Восстановить"):
+        if up_db and st.button("Восстановить базу"):
             with open(DB_NAME, "wb") as f: f.write(up_db.getbuffer())
             st.success("База восстановлена! Перезагрузите страницу.")
             st.stop()
@@ -82,7 +81,9 @@ if "auth" not in st.session_state:
         conn = sqlite3.connect(DB_NAME)
         res = conn.execute("SELECT username, role FROM users WHERE username=? AND password=?", (u, p)).fetchone()
         if res:
-            st.session_state["auth"], st.session_state["user"], st.session_state["role"] = True, res[0], res[1]
+            st.session_state["auth"] = True
+            st.session_state["user"] = res[0] # Исправлено получение имени
+            st.session_state["role"] = res[1] # Исправлено получение роли
             st.rerun()
         else: st.error("❌ Неверный логин или пароль")
     st.stop()
@@ -170,7 +171,9 @@ elif choice == "🛠 Производство":
                         send_db_backup()
                         st.rerun()
             with c2:
-                new_s = st.selectbox("Статус", ["Нове", "Обробка", "Готово"], index=["Нове", "Обробка", "Готово"].index(row['status']), key=f"s{row['id']}")
+                statuses = ["Нове", "Обробка", "Готово"]
+                idx = statuses.index(row['status']) if row['status'] in statuses else 0
+                new_s = st.selectbox("Статус", statuses, index=idx, key=f"s{row['id']}")
                 if st.button("Обновить статус", key=f"b{row['id']}"):
                     db_conn.execute("UPDATE orders SET status=? WHERE id=?", (new_s, row['id']))
                     db_conn.commit()
@@ -182,13 +185,31 @@ elif choice == "⚙️ Персонал" and user_role == "Адмін":
     st.header("👥 Персонал")
     users = pd.read_sql_query("SELECT username, role FROM users", db_conn)
     st.table(users)
-    with st.expander("➕ Добавить работника"):
-        u, p, r = st.text_input("Логин"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
-        if st.button("Создать"):
-            db_conn.execute("INSERT INTO users VALUES (?,?,?,?)", (u, p, r, datetime.now()))
-            db_conn.commit()
-            send_db_backup()
-            st.rerun()
+    
+    col1, col2 = st.columns(2)
+    with col1.expander("➕ Добавить работника"):
+        with st.form("u_add"):
+            u, p, r = st.text_input("Логин"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
+            if st.form_submit_button("Создать"):
+                db_conn.execute("INSERT INTO users VALUES (?,?,?,?)", (u, p, r, datetime.now()))
+                db_conn.commit()
+                send_db_backup()
+                st.rerun()
+    with col2.expander("📝 Редактировать / Удалить"):
+        target = st.selectbox("Пользователь", users['username'].tolist())
+        if target != 'admin':
+            new_login = st.text_input("Новый логин", value=target)
+            new_r = st.selectbox("Новая роль", ["Робочий", "Конструктор", "Адмін"], key="new_role")
+            if st.button("💾 Сохранить"):
+                db_conn.execute("UPDATE users SET username=?, role=? WHERE username=?", (new_login, new_r, target))
+                db_conn.commit()
+                send_db_backup()
+                st.rerun()
+            if st.button("🗑️ Удалить"):
+                db_conn.execute("DELETE FROM users WHERE username=?", (target,))
+                db_conn.commit()
+                send_db_backup()
+                st.rerun()
 
 # --- АНАЛИТИКА ---
 elif choice == "📊 Аналитика" and user_role == "Адмін":
@@ -197,5 +218,21 @@ elif choice == "📊 Аналитика" and user_role == "Адмін":
     ord_v = pd.read_sql_query("SELECT SUM(qty * price) as s FROM orders WHERE status != 'Готово'", db_conn)['s'].iloc[0] or 0
     st.metric("Капитал на складе", f"{inv_v:,.2f} грн")
     st.metric("В работе", f"{ord_v:,.2f} грн")
+
+# --- НОВЫЙ ЗАКАЗ ---
+elif choice == "📝 Новый заказ" and user_role == "Адмін":
+    st.header("🆕 Новый заказ")
+    with st.form("new_order", clear_on_submit=True):
+        c, d, q, p = st.text_input("Заказчик"), st.text_input("Деталь"), st.number_input("К-во", min_value=1), st.number_input("Цена")
+        files = st.file_uploader("Файлы", accept_multiple_files=True)
+        if st.form_submit_button("Запустить"):
+            has_f = False
+            if files:
+                has_f = True
+                for f in files: send_file_to_tg(f.getvalue(), f.name, f"🆕 Заказ {c}: {d}")
+            db_conn.execute("INSERT INTO orders (customer, detail, qty, price, status, has_files) VALUES (?,?,?,?,'Нове',?)", (c, d, q, p, has_f))
+            db_conn.commit()
+            send_db_backup()
+            st.success("✅ Заказ создан!")
 
 db_conn.close()
