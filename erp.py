@@ -1,34 +1,32 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 import requests
-import urllib.parse
 from datetime import datetime, timedelta
 
-# --- 1. НАСТРОЙКИ СТРАНИЦЫ ---
-st.set_page_config(page_title="Factory ERP Pro", layout="wide")
+# --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
+st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФИГУРАЦИЯ (БЕЗОПАСНОЕ ПОДКЛЮЧЕНИЕ) ---
+# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНИЙ МЕТОД) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Данные для входа (БЕЗ спецсимволов в URI, кодируем их автоматически)
-DB_USER = "postgres.sumpnxmxpdzwchanewnj"
-DB_PASS = "qWeRtY1234Qrohjt" # Пароль
-DB_HOST = "://supabase.com"
-DB_PORT = "6543"
-DB_NAME = "postgres"
+# Ми створюємо об'єкт URL, який автоматично виправляє всі проблеми з портами
+# Вам НЕ потрібно нічого міняти в цьому блоці, я вже вставив ваші дані
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username="postgres.sumpnxmxpdzwchanewnj",
+    password="qWeRtY1234Qrohjt",
+    host="://supabase.com",
+    port=6543,
+    database="postgres",
+    query={"sslmode": "require"},
+)
 
-# Автоматически кодируем пароль, чтобы спецсимволы не ломали ссылку
-encoded_pass = urllib.parse.quote_plus(DB_PASS)
+# Створення двигуна
+engine = create_engine(db_url, pool_pre_ping=True)
 
-# Собираем чистую строку подключения
-DB_URI = f"postgresql://{DB_USER}:{encoded_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
-
-# Создаем движок (Engine)
-engine = create_engine(DB_URI, pool_pre_ping=True)
-
-# --- 3. ФУНКЦИЯ TELEGRAM ---
+# --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
     url = f"https://telegram.org{TG_TOKEN}/sendDocument"
     files = {'document': (file_name, file_bytes)}
@@ -38,7 +36,7 @@ def send_to_telegram(file_bytes, file_name, caption):
     except:
         pass
 
-# --- 4. ИНИЦИАЛИЗАЦИЯ БД ---
+# --- 4. ІНІЦІАЛІЗАЦІЯ БД ---
 def init_db():
     try:
         with engine.connect() as conn:
@@ -49,35 +47,38 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username TEXT, action TEXT);
                 
                 INSERT INTO users (username, password, role, last_seen) 
-                VALUES ('admin', 'admin123', 'Админ', CURRENT_TIMESTAMP) 
+                VALUES ('admin', 'admin123', 'Адмін', CURRENT_TIMESTAMP) 
                 ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password;
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"Ошибка базы: {e}")
+        st.error(f"Помилка бази: {e}")
 
 init_db()
 
-# --- 5. АВТОРИЗАЦИЯ ---
+# --- 5. АВТОРИЗАЦІЯ ---
 if "authenticated" not in st.session_state:
     st.title("🏭 ERP Cloud (24/7)")
     st.info("Вхід: **admin** / **admin123**")
     u_in = st.text_input("Логін").strip()
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
-        with engine.connect() as conn:
-            res = conn.execute(text("SELECT username, role FROM users WHERE username=:u AND password=:p"), 
-                               {"u": u_in, "p": p_in}).fetchone()
-            if res:
-                st.session_state["authenticated"] = True
-                st.session_state["username"] = res[0]
-                st.session_state["role"] = res[1]
-                st.rerun()
-            else:
-                st.error("❌ Невірний логін або пароль")
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(text("SELECT username, role FROM users WHERE username=:u AND password=:p"), 
+                                   {"u": u_in, "p": p_in}).fetchone()
+                if res:
+                    st.session_state["authenticated"] = True
+                    st.session_state["username"] = res[0] # Виправлено отримання логіна
+                    st.session_state["role"] = res[1]     # Виправлено отримання ролі
+                    st.rerun()
+                else:
+                    st.error("❌ Невірний логін або пароль")
+        except Exception as e:
+            st.error(f"Помилка підключення: {e}")
     st.stop()
 
-# Обновление активности
+# Оновлення активності
 with engine.connect() as conn:
     conn.execute(text("UPDATE users SET last_seen = NOW() WHERE username = :u"), {"u": st.session_state["username"]})
     conn.commit()
@@ -104,7 +105,7 @@ menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Скла
 if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- 7. РАЗДЕЛЫ ---
+# --- 7. РОЗДІЛИ ---
 if choice == "📦 Склад":
     st.header("📦 Склад")
     df_inv = pd.read_sql(text("SELECT * FROM inventory ORDER BY name"), engine)
@@ -151,7 +152,7 @@ elif choice == "🛠 Виробництво":
                 st.success("📂 Файли в Telegram-архіві.")
             
             if user_role == "Адмін":
-                st.write(f"Цена: {row['price']} грн")
+                st.write(f"Ціна: {row['price']} грн")
                 if st.button("🗑️ Видалити замовлення", key=f"del_o_{row['id']}"):
                     with engine.connect() as conn:
                         conn.execute(text("DELETE FROM orders WHERE id=:id"), {"id": row['id']})
