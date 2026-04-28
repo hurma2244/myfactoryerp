@@ -1,28 +1,30 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 import requests
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНЕ ФОРМУВАННЯ URI) ---
+# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Пропишіть дані окремо, щоб уникнути помилок синтаксису в посиланні
-DB_USER = "postgres.sumpnxmxpdzwchanewnj"
-DB_PASS = "qWeRtY1234Qrohjt"
-DB_HOST = "://supabase.com"
-DB_PORT = "6543"
-DB_NAME = "postgres"
-
-# Збираємо рядок автоматично
-DB_URI = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+# Формуємо об'єкт посилання через спеціальний інструмент SQLAlchemy
+# Це автоматично виправить усі проблеми з портами та символами
+url_object = URL.create(
+    drivername="postgresql+psycopg2",
+    username="postgres.sumpnxmxpdzwchanewnj",
+    password="qWeRtY1234Qrohjt",
+    host="://supabase.com",
+    port=6543,
+    database="postgres",
+    query={"sslmode": "require"},
+)
 
 # Створення двигуна
-engine = create_engine(DB_URI, pool_pre_ping=True)
+engine = create_engine(url_object, pool_pre_ping=True)
 
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
