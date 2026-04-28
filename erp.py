@@ -8,15 +8,23 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (ФІНАЛЬНЕ ВИПРАВЛЕННЯ ПІДКЛЮЧЕННЯ) ---
+# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД ПІДКЛЮЧЕННЯ) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Простий рядок без зайвих знаків та слешів
-DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
+# Формуємо об'єкт посилання через інструменти SQLAlchemy (це прибере помилку ValueError)
+db_url = URL.create(
+    drivername="postgresql+psycopg2",
+    username="postgres.sumpnxmxpdzwchanewnj",
+    password="qWeRtY1234Qrohjt",
+    host=":/supabase.com",
+    port=6543,
+    database="postgres",
+    query={"sslmode": "require"},
+)
 
 # Створення двигуна
-engine = create_engine(DB_URI, pool_pre_ping=True)
+engine = create_engine(db_url, pool_pre_ping=True)
 
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
