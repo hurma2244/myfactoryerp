@@ -2,22 +2,22 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text, URL
 import requests
+import os
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД) ---
+# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНЕ ПІДКЛЮЧЕННЯ) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Формуємо об'єкт посилання через спеціальний інструмент SQLAlchemy
-# Це автоматично виправить усі проблеми з портами та символами
+# Формуємо об'єкт посилання без помилок у хості та порті
 url_object = URL.create(
     drivername="postgresql+psycopg2",
     username="postgres.sumpnxmxpdzwchanewnj",
     password="qWeRtY1234Qrohjt",
-    host="://supabase.com",
+    host="://supabase.com", # ТУТ НЕ МАЄ БУТИ //
     port=6543,
     database="postgres",
     query={"sslmode": "require"},
@@ -25,7 +25,6 @@ url_object = URL.create(
 
 # Створення двигуна
 engine = create_engine(url_object, pool_pre_ping=True)
-
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
@@ -53,7 +52,7 @@ def init_db():
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"Помилка бази: {e}")
+        st.error(f"Помилка ініціалізації бази: {e}")
 
 init_db()
 
@@ -115,7 +114,6 @@ if choice == "📦 Склад":
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             mat = c1.selectbox("Матеріал", df_inv['name'].tolist())
-            # Виправлено отримання значення кількості
             cur_v = float(df_inv[df_inv['name']==mat]['qty'].iloc[0])
             new_q = c2.number_input("Кількість", value=cur_v)
             if c3.button("Оновити"):
@@ -172,8 +170,10 @@ elif choice == "🛠 Виробництво":
 elif choice == "📝 Нове замовлення":
     st.header("📝 Реєстрація замовлення")
     with st.form("n_ord", clear_on_submit=True):
-        c, d = st.text_input("Клієнт"), st.text_input("Виріб")
-        qo, po = st.number_input("К-ть", min_value=1), st.number_input("Ціна")
+        c = st.text_input("Клієнт")
+        d = st.text_input("Виріб")
+        qo = st.number_input("Кількість", min_value=1)
+        po = st.number_input("Ціна")
         files = st.file_uploader("Файли", accept_multiple_files=True)
         
         if st.form_submit_button("Створити"):
