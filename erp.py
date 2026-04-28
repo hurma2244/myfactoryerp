@@ -18,7 +18,7 @@ db_url = URL.create(
     username="postgres",
     password="qWeRtY1234Qrohjt",
     host="db.sumpnxmxpdzwchanewnj.supabase.co", # ТІЛЬКИ ЦЕЙ АДРЕС, БЕЗ // ТА БЕЗ supabase.com НА ПОЧАТКУ
-    port=5432,
+    port=6543,
     database="postgres",
     query={"sslmode": "require"},
 )
