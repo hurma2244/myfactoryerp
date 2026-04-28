@@ -8,9 +8,17 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНЕ ПІДКЛЮЧЕННЯ) ---
-TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
-TG_CHAT_ID = "-1003848428987"
+# --- 2. КОНФІГУРАЦІЯ (ОСТАТОЧНЕ ВИПРАВЛЕННЯ) ---
+url_object = URL.create(
+    drivername="postgresql+psycopg2",
+    username="postgres.sumpnxmxpdzwchanewnj",
+    password="qWeRtY1234Qrohjt",
+    host="://supabase.com", # ПЕРЕВІРТЕ: тут не має бути ніяких // або supabase.com
+    port=6543,
+    database="postgres",
+    query={"sslmode": "require"},
+)
+
 
 # Формуємо об'єкт посилання без помилок у хості та порті
 url_object = URL.create(
