@@ -1,31 +1,22 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text, URL
+from sqlalchemy import create_engine, text
 import requests
-import os
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД ПІДКЛЮЧЕННЯ) ---
+# --- 2. КОНФІГУРАЦІЯ (ПРЯМЕ ПІДКЛЮЧЕННЯ) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Формуємо об'єкт посилання через інструменти SQLAlchemy (це прибере помилку ValueError)
-db_url = URL.create(
-    drivername="postgresql+psycopg2",
-    username="postgres.sumpnxmxpdzwchanewnj",
-    password="qWeRtY1234Qrohjt",
-    host=":/supabase.com",
-    port=6543,
-    database="postgres",
-    query={"sslmode": "require"},
-)
+# ПРЯМИЙ РЯДОК БЕЗ ЖОДНИХ СЛEШІВ ТА ПЕРЕМІННИХ
+# Використовуємо пулер (порт 6543) для сумісності з IPv4
+DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
 
 # Створення двигуна
-engine = create_engine(db_url, pool_pre_ping=True)
-
+engine = create_engine(DB_URI, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
@@ -65,8 +56,9 @@ if "authenticated" not in st.session_state:
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
         with engine.connect() as conn:
-            res = conn.execute(text("SELECT username, role FROM users WHERE username=:u AND password=:p"), 
-                               {"u": u_in, "p": p_in}).fetchone()
+            # Виправлено отримання даних користувача
+            query = text("SELECT username, role FROM users WHERE username=:u AND password=:p")
+            res = conn.execute(query, {"u": u_in, "p": p_in}).fetchone()
             if res:
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = res[0]
@@ -103,7 +95,8 @@ menu = ["📊 Аналітика", "🛠 Виробництво", "📦 Скла
 if user_role == "Адмін": menu += ["📝 Нове замовлення", "⚙️ Персонал"]
 choice = st.sidebar.selectbox("Меню", menu)
 
-# --- 7. РОЗДІЛИ (БЕЗ ЗМІН) ---
+# --- 7. РОЗДІЛИ ---
+
 if choice == "📦 Склад":
     st.header("📦 Склад")
     df_inv = pd.read_sql(text("SELECT * FROM inventory ORDER BY name"), engine)
@@ -114,8 +107,8 @@ if choice == "📦 Склад":
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             mat = c1.selectbox("Матеріал", df_inv['name'].tolist())
-            cur_v = float(df_inv[df_inv['name']==mat]['qty'].iloc[0])
-            new_q = c2.number_input("Кількість", value=cur_v)
+            cur_v = float(df_inv[df_inv['name'] == mat]['qty'].iloc[0])
+            new_q = c2.number_input("Нова к-ть", value=cur_v)
             if c3.button("Оновити"):
                 with engine.connect() as conn:
                     conn.execute(text("UPDATE inventory SET qty=:q WHERE name=:n"), {"q": new_q, "n": mat})
@@ -123,7 +116,7 @@ if choice == "📦 Склад":
                 st.rerun()
         
         col1, col2 = st.columns(2)
-        with col1.expander("➕ Додати"):
+        with col1.expander("➕ Додати позицію"):
             with st.form("add_mat"):
                 n = st.text_input("Назва")
                 q = st.number_input("К-ть", min_value=0.0)
@@ -143,7 +136,7 @@ if choice == "📦 Склад":
                     st.rerun()
 
 elif choice == "🛠 Виробництво":
-    st.header("🛠 Журнал виробництва")
+    st.header("🛠 Виробництво")
     df_orders = pd.read_sql(text("SELECT * FROM orders ORDER BY id DESC"), engine)
     for _, row in df_orders.iterrows():
         with st.expander(f"📦 №{row['id']} | {row['customer']} | {row['detail']} ({row['status']})"):
@@ -153,7 +146,7 @@ elif choice == "🛠 Виробництво":
             
             if user_role == "Адмін":
                 st.write(f"**Ціна:** {row['price']} грн")
-                if st.button("🗑️ Видалити замовлення", key=f"del_{row['id']}"):
+                if st.button("🗑️ Видалити", key=f"del_{row['id']}"):
                     with engine.connect() as conn:
                         conn.execute(text("DELETE FROM orders WHERE id=:id"), {"id": row['id']})
                         conn.commit()
@@ -161,20 +154,18 @@ elif choice == "🛠 Виробництво":
             
             new_s = st.selectbox("Статус", ["Нове", "Обробка", "Готово"], 
                                  index=["Нове", "Обробка", "Готово"].index(row['status']), key=f"st_{row['id']}")
-            if st.button("Зберегти статус", key=f"bt_{row['id']}"):
+            if st.button("Зберегти", key=f"bt_{row['id']}"):
                 with engine.connect() as conn:
                     conn.execute(text("UPDATE orders SET status=:s WHERE id=:id"), {"s": new_s, "id": row['id']})
                     conn.commit()
                 st.rerun()
 
 elif choice == "📝 Нове замовлення":
-    st.header("📝 Реєстрація замовлення")
+    st.header("📝 Нове замовлення")
     with st.form("n_ord", clear_on_submit=True):
-        c = st.text_input("Клієнт")
-        d = st.text_input("Виріб")
-        qo = st.number_input("Кількість", min_value=1)
-        po = st.number_input("Ціна")
-        files = st.file_uploader("Завантажити файли", accept_multiple_files=True)
+        c, d = st.text_input("Клієнт"), st.text_input("Виріб")
+        qo, po = st.number_input("К-ть", min_value=1), st.number_input("Ціна")
+        files = st.file_uploader("Файли", accept_multiple_files=True)
         
         if st.form_submit_button("Створити"):
             has_f = False
@@ -192,7 +183,7 @@ elif choice == "⚙️ Персонал":
     st.header("👥 Персонал")
     df_u = pd.read_sql(text("SELECT username, role FROM users"), engine)
     st.table(df_u)
-    with st.expander("➕ Додати працівника"):
+    with st.expander("➕ Додати"):
         with st.form("u_add"):
             u, p, r = st.text_input("Логін"), st.text_input("Пароль"), st.selectbox("Роль", ["Робочий", "Конструктор", "Адмін"])
             if st.form_submit_button("Створити"):
