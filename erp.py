@@ -1,38 +1,21 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text, URL
+from sqlalchemy import create_engine, text
 import requests
-import os
 from datetime import datetime, timedelta
 
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (ОСТАТОЧНЕ ВИПРАВЛЕННЯ) ---
-url_object = URL.create(
-    drivername="postgresql+psycopg2",
-    username="postgres.sumpnxmxpdzwchanewnj",
-    password="qWeRtY1234Qrohjt",
-    host="://supabase.com", # ПЕРЕВІРТЕ: тут не має бути ніяких // або supabase.com
-    port=6543,
-    database="postgres",
-    query={"sslmode": "require"},
-)
+# --- 2. КОНФІГУРАЦІЯ (ПРЯМЕ ПІДКЛЮЧЕННЯ БЕЗ ПОМИЛОК) ---
+TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
+TG_CHAT_ID = "-1003848428987"
 
-
-# Формуємо об'єкт посилання без помилок у хості та порті
-url_object = URL.create(
-    drivername="postgresql+psycopg2",
-    username="postgres.sumpnxmxpdzwchanewnj",
-    password="qWeRtY1234Qrohjt",
-    host="://supabase.com", # ТУТ НЕ МАЄ БУТИ //
-    port=6543,
-    database="postgres",
-    query={"sslmode": "require"},
-)
+# ПРЯМИЙ РЯДОК БЕЗ ЗАЙВИХ СИМВОЛІВ
+DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
 
 # Створення двигуна
-engine = create_engine(url_object, pool_pre_ping=True)
+engine = create_engine(DB_URI, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
@@ -60,7 +43,7 @@ def init_db():
             """))
             conn.commit()
     except Exception as e:
-        st.error(f"Помилка ініціалізації бази: {e}")
+        st.error(f"Помилка бази: {e}")
 
 init_db()
 
@@ -72,8 +55,8 @@ if "authenticated" not in st.session_state:
     p_in = st.text_input("Пароль", type="password").strip()
     if st.button("Увійти"):
         with engine.connect() as conn:
-            res = conn.execute(text("SELECT username, role FROM users WHERE username=:u AND password=:p"), 
-                               {"u": u_in, "p": p_in}).fetchone()
+            query = text("SELECT username, role FROM users WHERE username=:u AND password=:p")
+            res = conn.execute(query, {"u": u_in, "p": p_in}).fetchone()
             if res:
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = res[0]
@@ -216,3 +199,4 @@ elif choice == "📊 Аналітика":
         t_ord = conn.execute(text("SELECT SUM(qty * price) FROM orders WHERE status != 'Готово'")).scalar() or 0
     st.metric("Склад", f"{t_inv:,.2f} грн")
     st.metric("В роботі", f"{t_ord:,.2f} грн")
+
