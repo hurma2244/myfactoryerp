@@ -8,8 +8,8 @@ from datetime import datetime
 st.set_page_config(page_title="Factory ERP", layout="wide")
 
 # ВСТАВЬТЕ СКОПИРОВАННУЮ ССЫЛКУ СЮДА ПОЛНОСТЬЮ
-# Она должна выглядеть примерно так: "postgresql://postgres.xxx:password@://supabase.com"
-DB_URI = postgresql://postgres:qWeRtY1234Qrohjt@db.sumpnxmxpdzwchanewnj.supabase.co:5432/postgres
+DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
+
 
 engine = create_engine(DB_URI, pool_pre_ping=True)
 
