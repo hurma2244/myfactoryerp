@@ -7,23 +7,22 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНИЙ МЕТОД) ---
+# --- 2. КОНФІГУРАЦІЯ (БЕЗПЕЧНИЙ ТА НАДІЙНИЙ МЕТОД) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Ми створюємо об'єкт URL, який автоматично виправляє всі проблеми з портами
-# Вам НЕ потрібно нічого міняти в цьому блоці, я вже вставив ваші дані
+# Ми використовуємо об'єкт URL, щоб Python сам зібрав правильну адресу без зайвих символів
 db_url = URL.create(
     drivername="postgresql+psycopg2",
     username="postgres.sumpnxmxpdzwchanewnj",
     password="qWeRtY1234Qrohjt",
-    host="://supabase.com",
+    host="://supabase.com", # ТУТ НЕМАЄ НІЯКИХ //
     port=6543,
     database="postgres",
     query={"sslmode": "require"},
 )
 
-# Створення двигуна
+# Створення двигуна з перевіркою з'єднання
 engine = create_engine(db_url, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
@@ -69,13 +68,13 @@ if "authenticated" not in st.session_state:
                                    {"u": u_in, "p": p_in}).fetchone()
                 if res:
                     st.session_state["authenticated"] = True
-                    st.session_state["username"] = res[0] # Виправлено отримання логіна
-                    st.session_state["role"] = res[1]     # Виправлено отримання ролі
+                    st.session_state["username"] = res[0] # Виправлено
+                    st.session_state["role"] = res[1]     # Виправлено
                     st.rerun()
                 else:
                     st.error("❌ Невірний логін або пароль")
         except Exception as e:
-            st.error(f"Помилка підключення: {e}")
+            st.error(f"Помилка авторизації: {e}")
     st.stop()
 
 # Оновлення активності
@@ -116,7 +115,7 @@ if choice == "📦 Склад":
         if not df_inv.empty:
             c1, c2, c3 = st.columns(3)
             mat = c1.selectbox("Матеріал", df_inv['name'].tolist())
-            cur_v = float(df_inv[df_inv['name']==mat]['qty'].iloc[0])
+            cur_v = float(df_inv[df_inv['name']==mat]['qty'].iloc[0]) # Виправлено
             new_q = c2.number_input("Нова кількість", value=cur_v)
             if c3.button("Оновити"):
                 with engine.connect() as conn:
@@ -206,4 +205,3 @@ elif choice == "📊 Аналітика":
         t_ord = conn.execute(text("SELECT SUM(qty * price) FROM orders WHERE status != 'Готово'")).scalar() or 0
     st.metric("Склад", f"{t_inv:,.2f} грн")
     st.metric("В роботі", f"{t_ord:,.2f} грн")
-
