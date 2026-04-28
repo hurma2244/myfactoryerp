@@ -8,24 +8,15 @@ from datetime import datetime, timedelta
 # --- 1. НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Factory ERP Cloud Pro", layout="wide")
 
-# --- 2. КОНФІГУРАЦІЯ (НАЙБІЛЬШ НАДІЙНИЙ МЕТОД) ---
+# --- 2. КОНФІГУРАЦІЯ (ОСТАТОЧНЕ ВИПРАВЛЕННЯ) ---
 TG_TOKEN = "8743391673:AAGPXg-5-87Y881bO5XWhftEPPugKNK4y88"
 TG_CHAT_ID = "-1003848428987"
 
-# Формуємо об'єкт посилання через спеціальний інструмент SQLAlchemy
-# Це автоматично виправить усі проблеми з портами та символами
-url_object = URL.create(
-    drivername="postgresql+psycopg2",
-    username="postgres.sumpnxmxpdzwchanewnj",
-    password="qWeRtY1234Qrohjt",
-    host="://supabase.com",
-    port=6543,
-    database="postgres",
-    query={"sslmode": "require"},
-)
+# Прямий рядок без зайвих знаків
+DB_URI = "postgresql://postgres.sumpnxmxpdzwchanewnj:qWeRtY1234Qrohjt@://supabase.com"
 
 # Створення двигуна
-engine = create_engine(url_object, pool_pre_ping=True)
+engine = create_engine(DB_URI, pool_pre_ping=True)
 
 # --- 3. ФУНКЦІЯ TELEGRAM ---
 def send_to_telegram(file_bytes, file_name, caption):
